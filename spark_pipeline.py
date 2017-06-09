@@ -1,8 +1,11 @@
 from pyspark.sql import functions as F
+from pyspark.sql.types import *
+from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.ml.recommendation import ALS
 
-orders = spark.read.csv('./orders.csv', header=True)
-train_orders = spark.read.csv('./order_products__train.csv', header=True)
-priprior_orders = spark.read.csv('./order_products__prior.csv', header=True)
+orders = spark.read.csv('./data/orders.csv', header=True)
+train_orders = spark.read.csv('./data/order_products__train.csv', header=True)
+prior_orders = spark.read.csv('./data/order_products__prior.csv', header=True)
 products = spark.read.csv('./products.csv', header=True)
 aisles = spark.read.csv('./aisles.csv', header=True)
 departments = spark.read.csv('./departments.csv', header=True)
@@ -15,6 +18,54 @@ print orders.show(5)
 print orders.describe().toPandas().transpose()
 print orders.select('eval_set').distinct().show() # show the unique values in 'eval_set' column
 print pd.DataFrame(orders.filter(orders['eval_set'] == 'test').take(12), columns=orders.columns).transpose() # show the 'test' rows
+
+
+###########################################
+### Prepare for Collaborating Filtering ###
+###########################################
+
+# Join orders to prior_orders on order_id. This is training set.
+prior_orders = prior_orders.join(orders, prior_orders.order_id == orders.order_id, 'left') \
+                    .select(orders.user_id, prior_orders.order_id, prior_orders.product_id, \
+                            prior_orders.add_to_cart_order, prior_orders.reordered)
+print pd.DataFrame(prior_orders.take(5), columns=prior_orders.columns).transpose()
+prior_orders = prior_orders.withColumn('add_to_cart_order', prior_orders['add_to_cart_order'].cast(FloatType()))
+prior_orders = prior_orders.withColumn('rank', F.pow(F.col('add_to_cart_order'), -1))
+prior_orders = prior_orders.withColumn('rating', F.col('rank')*0.5+F.col('reordered')*0.5) # Creates a target variable called rating
+
+# Join orders to train_orders on order_id. This is validation set.
+train_orders = train_orders.join(orders, train_orders.order_id == orders.order_id, 'left') \
+                    .select(orders.user_id, train_orders.order_id, train_orders.product_id, \
+                            train_orders.add_to_cart_order, train_orders.reordered)
+print pd.DataFrame(train_orders.take(5), columns=train_orders.columns).transpose()
+train_orders = train_orders.withColumn('add_to_cart_order', F.col('add_to_cart_order').cast(FloatType()))
+train_orders = train_orders.withColumn('rank', F.pow(F.col('add_to_cart_order'), -1))
+train_orders = train_orders.withColumn('rating', F.col('rank')*0.5+F.col('reordered')*0.5)
+
+# Make training, validation set
+training = prior_orders.select(['user_id', 'product_id', 'rating'])
+valid = train_orders.select(['user_id', 'product_id', 'rating'])
+training = training.withColumn('user_id', F.col('user_id').cast(IntegerType()))
+training = training.withColumn('product_id', F.col('product_id').cast(IntegerType()))
+print [f.dataType for f in training.schema.fields]
+valid = valid.withColumn('user_id', F.col('user_id').cast(IntegerType()))
+valid = valid.withColumn('product_id', F.col('product_id').cast(IntegerType()))
+print [f.dataType for f in valid.schema.fields]
+
+# Training...and predicting...
+als = ALS(maxIter=5, regParam=0.01, userCol="user_id", itemCol="product_id", ratingCol="rating")
+model = als.fit(training)
+valid_pred = model.transform(valid)
+print valid_pred['prediction'].isNull().count()
+print valid_pred.where(valid_pred.prediction.isNull()).count()
+evaluator = RegressionEvaluator(metricName='rmse', labelCol='rating')
+rmse = evaluator.evaluation(valid_pred)
+print "RMSE: ", rmse
+
+
+################################################
+### Basic Data Manipulation from Nick Sarris ###
+################################################
 
 # Get test set, and remove user_id in orders that's not in the test set
 test = orders.filter(orders['eval_set'] == 'test')
@@ -38,11 +89,11 @@ train = orders.filter(orders['eval_set'] == 'train')
 
 # Find the number of the last order placed
 prior.withColumn('num_orders', prior.groupby('user_id').agg(F.max('order_number')))
-prior.withColumn('num_orders', temp)
-df_with_x4 = df.withColumn("x4", lit(0))
 
 
-
+#####################################
+### SQL Join and Concat DataFrame ###
+#####################################
 
 # Concat train and prior df vertically
 def unionAll(*dfs):
