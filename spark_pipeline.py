@@ -1,11 +1,14 @@
+import pandas as pd
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
 from pyspark.ml.evaluation import RegressionEvaluator
-from pyspark.ml.recommendation import ALS
+from pyspark.mllib.recommendation import ALS
+# from pyspark.ml.recommendation import ALS
 
-orders = spark.read.csv('./data/orders.csv', header=True)
-train_orders = spark.read.csv('./data/order_products__train.csv', header=True)
-prior_orders = spark.read.csv('./data/order_products__prior.csv', header=True)
+
+orders = spark.read.csv('./orders.csv', header=True)
+train_orders = spark.read.csv('./order_products__train.csv', header=True)
+prior_orders = spark.read.csv('./order_products__prior.csv', header=True)
 products = spark.read.csv('./products.csv', header=True)
 aisles = spark.read.csv('./aisles.csv', header=True)
 departments = spark.read.csv('./departments.csv', header=True)
@@ -52,15 +55,45 @@ valid = valid.withColumn('user_id', F.col('user_id').cast(IntegerType()))
 valid = valid.withColumn('product_id', F.col('product_id').cast(IntegerType()))
 print [f.dataType for f in valid.schema.fields]
 
+# Training with old MlLib
+model = ALS.train(training, rank=10, iterations=10)
+model.save(sc, './model_1')
+products_for_users = model.recommendProductsForUsers(3).collect()
+
+test = orders.filter(orders['eval_set'] == 'test')
+test = test.select('user_id')
+
+
 # Training...and predicting...
 als = ALS(maxIter=5, regParam=0.01, userCol="user_id", itemCol="product_id", ratingCol="rating")
 model = als.fit(training)
 valid_pred = model.transform(valid)
-print valid_pred['prediction'].isNull().count()
-print valid_pred.where(valid_pred.prediction.isNull()).count()
+print valid_pred.filter(valid_pred.prediction.isNotNull()).count()
+print valid_pred.filter(valid_pred.rating.isNotNull()).count()
+valid_pred = valid_pred.na.drop(subset=["prediction"])
+print valid_pred.count()
+# Save prediction
+print type(valid_pred)
+valid_pred.write.csv('./valid_pred_2.csv', header=True)
+# Evaluate RMSE: 0.28033986860868765
 evaluator = RegressionEvaluator(metricName='rmse', labelCol='rating')
-rmse = evaluator.evaluation(valid_pred)
-print "RMSE: ", rmse
+rmse_1 = evaluator.evaluate(valid_pred)
+print "RMSE: ", rmse_1
+
+# Training with implicit feedbacks
+als_imp = ALS(maxIter=5, regParam=0.01, userCol="user_id", itemCol="product_id", ratingCol="rating", implicitPrefs=True)
+model_imp = als_imp.fit(training)
+valid_pred_imp = model_imp.transform(valid)
+print valid_pred_imp.filter(valid_pred_imp.prediction.isNotNull()).count()
+print valid_pred_imp.filter(valid_pred_imp.rating.isNotNull()).count()
+valid_pred_imp = valid_pred_imp.na.drop(subset=["prediction"])
+print valid_pred_imp.count()
+# Save prediction
+valid_pred_imp.write.csv('./valid_pred_imp_2.csv', header=True)
+# Evaluate RMSE: 0.49590265732641114
+evaluator = RegressionEvaluator(metricName='rmse', labelCol='rating')
+rmse_2 = evaluator.evaluate(valid_pred_imp)
+print "RMSE: ", rmse_2
 
 
 ################################################
