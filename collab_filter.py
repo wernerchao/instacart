@@ -22,3 +22,42 @@ print predictions.where(predictions.prediction.isNull()).count()
 evaluator = RegressionEvaluator(metricName="mae", labelCol="rating")
 rmse = evaluator.evaluate(predictions)
 print 'RMSE: ', rmse
+
+
+# Collect product feature matrix
+productFeatures = bestModel.productFeatures().collect() 
+productArray=[]
+productFeaturesArray=[]
+for x in productFeatures:
+    productArray.append(x[0])
+    productFeaturesArray.append(x[1])  
+    matrix=np.matrix(productFeaturesArray)
+    productArrayBroadCast=sc.broadcast(productArray)
+    productFeaturesArraybroadcast=sc.broadcast(matrix.T)
+
+def func(iterator):
+    userFeaturesArray = []
+    userArray = []
+    for x in iterator:
+        userArray.append(x[0])
+        userFeaturesArray.append(x[1])
+        userFeatureMatrix = np.matrix(userFeaturesArray)
+        userRecommendationArray = userFeatureMatrix*(productFeaturesArraybroadcast.value)
+        mappedUserRecommendationArray = []
+        #Extract ratings from the matrix
+        i=0
+        for i in range(0,len(userArray)):
+            ratingdict={}
+            j=0
+            for j in range(0,len(productArrayBroadcast.value)):
+                ratingdict[str(productArrayBroadcast.value[j])]=userRecommendationArray.item((i,j))
+                j=j+1
+            #Take the top 8 recommendations for the user
+            sort_apps=sorted(ratingdict.keys(), key=lambda x: x[1])[:8]
+            sort_apps='|'.join(sort_apps)
+            mappedUserRecommendationArray.append((userArray[i],sort_apps))
+            i=i+1
+    return [x for x in mappedUserRecommendationArray]
+
+
+recommendations=model.userFeatures().repartition(2000).mapPartitions(func)

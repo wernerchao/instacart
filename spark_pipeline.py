@@ -2,11 +2,11 @@ import pandas as pd
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
 from pyspark.ml.evaluation import RegressionEvaluator
-from pyspark.mllib.recommendation import ALS
+from pyspark.mllib.recommendation import ALS, MatrixFactorizationModel
 # from pyspark.ml.recommendation import ALS
 
 
-orders = spark.read.csv('./orders.csv', header=True)
+orders = spark.read.csv('./data/orders.csv', header=True)
 train_orders = spark.read.csv('./order_products__train.csv', header=True)
 prior_orders = spark.read.csv('./order_products__prior.csv', header=True)
 products = spark.read.csv('./products.csv', header=True)
@@ -58,10 +58,21 @@ print [f.dataType for f in valid.schema.fields]
 # Training with old MlLib
 model = ALS.train(training, rank=10, iterations=10)
 model.save(sc, './model_1')
-products_for_users = model.recommendProductsForUsers(3).collect()
-
 test = orders.filter(orders['eval_set'] == 'test')
-test = test.select('user_id')
+test_id = test.select('user_id')
+test_id_list = test_id.collect()
+def unionAll(*dfs):
+    ''' Stack the DataFrames vertically '''
+    return reduce(F.DataFrame.unionAll, dfs)
+product_all = unionAll(training.select('product_id'), valid.select('product_id'))
+
+# Recommend product for users in test set
+rec = test_id.rdd.map(lambda row: model.recommendProducts(row, 3))
+rec_df = test.withColumn('rec', model.recommendProducts(test_id_list, 3))
+
+make_rec = F.udf(lambda row: model.recommendProducts(row, 3))
+rec_df = test.withColumn('rec', make_rec(F.col('user_id')))
+make_rec(1, 3) # Recommend user 1, 3 products
 
 
 # Training...and predicting...
@@ -131,7 +142,7 @@ prior.withColumn('num_orders', prior.groupby('user_id').agg(F.max('order_number'
 # Concat train and prior df vertically
 def unionAll(*dfs):
     ''' Stack the DataFrames vertically '''
-    return reduce(DataFrame.unionAll, dfs)
+    return reduce(F.DataFrame.unionAll, dfs)
 train_prior = unionAll(order_products__train, order_products__prior)
 train_prior.describe().toPandas().transpose()
 
