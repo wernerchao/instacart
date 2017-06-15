@@ -1,123 +1,178 @@
+import numpy as np
 import pandas as pd
-import operator
-
-# reading data
-prior_orders = pd.read_csv('../data/order_products__prior.csv')
-train_orders = pd.read_csv('../data/order_products__train.csv')
-orders = pd.read_csv('../data/orders.csv')
-
-# removing all user_ids not in the test set
-test  = orders[orders['eval_set'] == 'test' ]
-user_ids = test['user_id'].values
-orders = orders[orders['user_id'].isin(user_ids)]
-
-# combine prior rows by user_id, add product_ids to a list
-prior_products = pd.DataFrame(prior_orders.groupby('order_id')['product_id'].apply(list))
-prior_products.reset_index(level=['order_id'], inplace=True)
-prior_products.columns = ['order_id','products_list']
-
-# combine train rows by user_id, add product_ids to a list
-train_products = pd.DataFrame(train_orders.groupby(
-    'order_id')['product_id'].apply(list))
-train_products.reset_index(level=['order_id'], inplace=True)
-train_products.columns = ['order_id','products_list']
-
-# seperate orders into prior/train sets
-# turns out there are no test user_ids in the training set so train will be empty
-prior = orders[orders['eval_set'] == 'prior']
-train = orders[orders['eval_set'] == 'train']
-
-# find the number of the last order placed
-prior['num_orders'] = prior.groupby(['user_id'])['order_number'].transform(max)
-train['num_orders'] = train.groupby(['user_id'])['order_number'].transform(max)
-
-# merge everything into one dataframe
-prior = pd.merge(prior, prior_products, on='order_id', how='left')
-train = pd.merge(train, train_products, on='order_id', how='left')
-comb = pd.concat([prior, train], axis=0).reset_index(drop=True)
-
-# test_cols = ['order_id','user_id']
-# cols = ['order_id','user_id','order_number','num_orders','products_list']
-
-# comb = comb[cols]
-# test = test[test_cols]
-
-# # iterate through dataframe, adding data to dictionary
-# # data added is in the form of a list:
-#     # list[0] = weight of the data: (1 + current order number / final order number), thus later data is weighted more
-#     # list[1] = how important the item is to the buyer: (order in the cart / number of items bought), thus items bought first are weighted more
-
-# # also used the average amount of items bought every order as a benchmark for how many items to add per user in the final submission
-
-# product_dict = {}
-# for i, row in comb.iterrows():
-#     if i % 100000 == 0:
-#         print('Iterated Through {} Rows...'.format(i))
-
-#     if row['user_id'] in product_dict:
-#         index = 1
-#         list.append(product_dict[row['user_id']]['len_products'], len(row['products_list']))
-#         for val in row['products_list']:
-#             if val in product_dict[row['user_id']]:
-#                 product_dict[row['user_id']][val][0] += 1 + int(row['order_number']) / int(row['num_orders'])
-#                 list.append(product_dict[row['user_id']][val][1], index / len(row['products_list']))
-#             else:
-#                 product_dict[row['user_id']][val] = [1 + int(row['order_number']) / int(row['num_orders']),
-#                                               [index / len(row['products_list'])]]
-#             index += 1
-#     else:
-#         index = 1
-#         product_dict[row['user_id']] = {'len_products': [
-#             len(row['products_list'])]}
-#         for val in row['products_list']:
-#             product_dict[row['user_id']][val] = [1 + int(row['order_number']) / int(row['num_orders']),
-#                                           [index / len(row['products_list'])]]
-#             index += 1
-
-# final_data = {}
-# for user_id in product_dict:
-#     final_data[user_id] = {}
-#     for product_id in product_dict[user_id]:
-#         if product_id == 'len_products':
-#             final_data[user_id][product_id] = \
-#                 round(sum(product_dict[user_id][product_id])/
-#                     len(product_dict[user_id][product_id]))
-#         else:
-#             final_data[user_id][product_id] = \
-#                 [product_dict[user_id][product_id][0],1/
-#                  (sum(product_dict[user_id][product_id][1])/
-#                 len(product_dict[user_id][product_id][1]))]
-
-# # iterate through testing dataframe
-# # every user_id in test corresponds to a dictionary entry
-# # call the dictionary with every row, products by weight, combine them into a string, and append them to products
-
-# products = []
-# for i, row in test.iterrows():
-#     if i % 100000 == 0:
-#         print('Iterated Through {} Rows...'.format(i))
-
-#     final_products = []
-#     len_products = None
-#     total_products = final_data[row['user_id']].items()
-#     for product in total_products:
-#         if product[0] == 'len_products':
-#             len_products = product[1]
-#         else:
-#             list.append(final_products, product)
-
-#     output = []
-#     product_list = sorted(final_products,
-#         key=operator.itemgetter(1), reverse=True)
-#     for val in product_list[:len_products]:
-#         list.append(output, str(val[0]))
-#     final_output = ' '.join(output)
-#     list.append(products, final_output)
-
-# # create submission
-# submission = pd.DataFrame()
-# submission['order_id'] = test['order_id']
-# submission['products'] = products
-# submission.to_csv('submission.csv', index=False)
+IDIR = '../data/'
 
 
+print('loading prior')
+priors = pd.read_csv(IDIR + 'order_products__prior.csv', dtype={
+            'order_id': np.int32,
+            'product_id': np.uint16,
+            'add_to_cart_order': np.int16,
+            'reordered': np.int8})
+
+print('loading train')
+train = pd.read_csv(IDIR + 'order_products__train.csv', dtype={
+            'order_id': np.int32,
+            'product_id': np.uint16,
+            'add_to_cart_order': np.int16,
+            'reordered': np.int8})
+
+print('loading orders')
+orders = pd.read_csv(IDIR + 'orders.csv', dtype={
+        'order_id': np.int32,
+        'user_id': np.int32,
+        'eval_set': 'category',
+        'order_number': np.int16,
+        'order_dow': np.int8,
+        'order_hour_of_day': np.int8,
+        'days_since_prior_order': np.float32})
+
+print('loading products')
+products = pd.read_csv(IDIR + 'products.csv', dtype={
+        'product_id': np.uint16,
+        'order_id': np.int32,
+        'aisle_id': np.uint8,
+        'department_id': np.uint8},
+        usecols=['product_id', 'aisle_id', 'department_id'])
+
+print('priors {}: {}'.format(priors.shape, ', '.join(priors.columns)))
+print('orders {}: {}'.format(orders.shape, ', '.join(orders.columns)))
+print('train {}: {}'.format(train.shape, ', '.join(train.columns)))
+
+###
+
+print('computing product f')
+prods = pd.DataFrame()
+prods['orders'] = priors.groupby(priors.product_id).size().astype(np.int32)
+prods['reorders'] = priors['reordered'].groupby(priors.product_id).sum().astype(np.float32)
+prods['reorder_rate'] = (prods.reorders / prods.orders).astype(np.float32)
+products = products.join(prods, on='product_id')
+products.set_index('product_id', drop=False, inplace=True)
+del prods
+
+
+print('add order info to priors')
+orders.set_index('order_id', inplace=True, drop=False)
+priors = priors.join(orders, on='order_id', rsuffix='_')
+priors.drop('order_id_', inplace=True, axis=1)
+
+### user features
+
+
+print('computing user f')
+usr = pd.DataFrame()
+usr['average_days_between_orders'] = orders.groupby('user_id')['days_since_prior_order'].mean().astype(np.float32)
+usr['nb_orders'] = orders.groupby('user_id').size().astype(np.int16)
+
+users = pd.DataFrame()
+users['total_items'] = priors.groupby('user_id').size().astype(np.int16)
+users['all_products'] = priors.groupby('user_id')['product_id'].apply(set)
+users['total_distinct_items'] = (users.all_products.map(len)).astype(np.int16)
+
+users = users.join(usr)
+del usr
+users['average_basket'] = (users.total_items / users.nb_orders).astype(np.float32)
+print('user f', users.shape)
+
+### userXproduct features
+
+print('compute userXproduct f - this is long...')
+priors['user_product'] = priors.product_id + priors.user_id * 100000
+
+d= dict()
+for row in priors.itertuples():
+    z = row.user_product
+    if z not in d:
+        d[z] = (1,
+                (row.order_number, row.order_id),
+                row.add_to_cart_order)
+    else:
+        d[z] = (d[z][0] + 1,
+                max(d[z][1], (row.order_number, row.order_id)),
+                d[z][2] + row.add_to_cart_order)
+
+print('to dataframe (less memory)')
+userXproduct = pd.DataFrame.from_dict(d, orient='index')
+del d
+userXproduct.columns = ['nb_orders', 'last_order_id', 'sum_pos_in_cart']
+userXproduct.nb_orders = userXproduct.nb_orders.astype(np.int16)
+userXproduct.last_order_id = userXproduct.last_order_id.map(lambda x: x[1]).astype(np.int32)
+userXproduct.sum_pos_in_cart = userXproduct.sum_pos_in_cart.astype(np.int16)
+print('user X product f', len(userXproduct))
+
+del priors
+
+### train / test orders ###
+print('split orders : train, test')
+test_orders = orders[orders.eval_set == 'test']
+train_orders = orders[orders.eval_set == 'train']
+
+train.set_index(['order_id', 'product_id'], inplace=True, drop=False)
+
+### build list of candidate products to reorder, with features ###
+
+def features(selected_orders, labels_given=False):
+    print('build candidate list')
+    order_list = []
+    product_list = []
+    labels = []
+    i=0
+    for row in selected_orders.itertuples():
+        i+=1
+        if i%10000 == 0: print('order row',i)
+        order_id = row.order_id
+        user_id = row.user_id
+        user_products = users.all_products[user_id]
+        product_list += user_products
+        order_list += [order_id] * len(user_products)
+        if labels_given:
+            labels += [(order_id, product) in train.index for product in user_products]
+        
+    df = pd.DataFrame({'order_id':order_list, 'product_id':product_list}, dtype=np.int32)
+    labels = np.array(labels, dtype=np.int8)
+    del order_list
+    del product_list
+    
+    print('user related features')
+    df['user_id'] = df.order_id.map(orders.user_id)
+    df['user_total_orders'] = df.user_id.map(users.nb_orders)
+    df['user_total_items'] = df.user_id.map(users.total_items)
+    df['total_distinct_items'] = df.user_id.map(users.total_distinct_items)
+    df['user_average_days_between_orders'] = df.user_id.map(users.average_days_between_orders)
+    df['user_average_basket'] =  df.user_id.map(users.average_basket)
+    
+    print('order related features')
+    # df['dow'] = df.order_id.map(orders.order_dow)
+    df['order_hour_of_day'] = df.order_id.map(orders.order_hour_of_day)
+    df['days_since_prior_order'] = df.order_id.map(orders.days_since_prior_order)
+    df['days_since_ratio'] = df.days_since_prior_order / df.user_average_days_between_orders
+    
+    print('product related features')
+    df['aisle_id'] = df.product_id.map(products.aisle_id)
+    df['department_id'] = df.product_id.map(products.department_id)
+    df['product_orders'] = df.product_id.map(products.orders).astype(np.int32)
+    df['product_reorders'] = df.product_id.map(products.reorders)
+    df['product_reorder_rate'] = df.product_id.map(products.reorder_rate)
+
+    print('user_X_product related features')
+    df['z'] = df.user_id * 100000 + df.product_id
+    df.drop(['user_id'], axis=1, inplace=True)
+    df['UP_orders'] = df.z.map(userXproduct.nb_orders)
+    df['UP_orders_ratio'] = (df.UP_orders / df.user_total_orders).astype(np.float32)
+    df['UP_last_order_id'] = df.z.map(userXproduct.last_order_id)
+    df['UP_average_pos_in_cart'] = (df.z.map(userXproduct.sum_pos_in_cart) / df.UP_orders).astype(np.float32)
+    df['UP_reorder_rate'] = (df.UP_orders / df.user_total_orders).astype(np.float32)
+    df['UP_orders_since_last'] = df.user_total_orders - df.UP_last_order_id.map(orders.order_number)
+    df['UP_delta_hour_vs_last'] = abs(df.order_hour_of_day - df.UP_last_order_id.map(orders.order_hour_of_day)).map(lambda x: min(x, 24-x)).astype(np.int8)
+    #df['UP_same_dow_as_last_order'] = df.UP_last_order_id.map(orders.order_dow) == \
+    #                                              df.order_id.map(orders.order_dow)
+
+    df.drop(['UP_last_order_id', 'z'], axis=1, inplace=True)
+    print(df.dtypes)
+    print(df.memory_usage())
+    return (df, labels)
+    
+
+df_train, labels = features(train_orders, labels_given=True)
+df_train.to_csv('df_train.csv', index=False)
+labels.to_csv('labels.csv', index=False)
