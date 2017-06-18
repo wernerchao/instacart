@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-IDIR = '../data/'
+IDIR = '../../data/'
 
 ### Build list of candidate products to reorder, with features ###
 def features(selected_orders, labels_given=False):
@@ -172,6 +172,6 @@ if __name__ == '__main__':
     priors.set_index(['order_id', 'product_id'], inplace=True, drop=False)
         
     ### Build the features using the function ###
-    df_test, labels_test = features(test_orders, labels_given=True)
+    df_test, labels_test = features(test_orders, labels_given=False)
     df_test.to_csv('df_test.csv', index=False)
     # pd.DataFrame(labels_test).to_csv('labels_test.csv', index=False) # No labels for test set.
